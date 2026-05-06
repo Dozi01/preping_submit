@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Environments and local secrets
+.env
+.codex
+.venv/
+venv/
+.vscode/
+.release/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Experiment outputs
+outputs/
+runs/
+logs/
+*.log
+*.tmp
+
+# Local manuscript drafts
+manuscript/

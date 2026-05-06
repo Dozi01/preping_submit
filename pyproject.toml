@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "preping"
+version = "0.1.0"
+description = "Code for PrePing experiments"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [
+  { name = "Anonymous Authors" }
+]
+dependencies = [
+  "requests",
+  "rich",
+  "python-dotenv",
+  "tiktoken",
+  "numpy",
+  "jinja2",
+  "openai",
+  "PyYAML",
+  "azure-identity"
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+addopts = "-sv --durations=0"
+
+[tool.ruff]
+line-length = 119
+lint.select = ["E", "F", "I", "W"]
+lint.ignore = ["F403", "E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["preping"]
+lines-after-imports = 2
