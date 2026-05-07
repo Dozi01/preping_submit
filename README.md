@@ -15,7 +15,6 @@ PrePing runs a cycle of:
 - `src/preping/core/memory/playbook/`: PrePing playbook memory induction, retrieval, reflection, and curation.
 - `src/preping/appworld/`: AppWorld adapters for agents, environments, task execution, and task generation.
 - `experiments/appworld/`: runnable AppWorld experiment entry points and prompt templates.
-- `servers/`: optional local embedding server helper.
 
 ## Entry Points
 
