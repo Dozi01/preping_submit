@@ -24,9 +24,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--memory_selection_mode",
         type=str,
-        choices=["default", "single_run_include_failure"],
+        choices=["feasible_only", "success_only", "default", "single_run_include_failure"],
         default=None,
-        help="Research mode for validator-based memory selection",
+        help="Validator-gated solver-memory policy: feasible_only (paper default) or success_only.",
     )
     parser.add_argument("--base_task_id", type=str, default=None, help="Base task ID for environment initialization")
     parser.add_argument("--target_apps", type=str, nargs="+", default=None, help="Focus on specific apps for task generation")

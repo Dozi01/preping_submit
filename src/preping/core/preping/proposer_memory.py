@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import re
+from collections import Counter
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -11,6 +13,9 @@ from .records import ProposerMemoryRecord
 
 class PrePingProposerMemory:
     """Accumulate synthetic-task outcomes for future task generation."""
+
+    _APPWORLD_API_CALL_RE = re.compile(r"\bapis\.([A-Za-z_]\w*)\.([A-Za-z_]\w*)\s*\(")
+    _SUPPORT_APPS = {"api_docs", "supervisor"}
 
     def __init__(self) -> None:
         self._entries: List[ProposerMemoryRecord] = []
@@ -33,6 +38,11 @@ class PrePingProposerMemory:
         new_entries: List[ProposerMemoryRecord] = []
         for synthetic_idx, aggregate_item in sorted(aggregate_map.items(), key=lambda pair: int(pair[0])):
             group_results = grouped_results.get(synthetic_idx, [])
+            original_task = self._first_original_task(group_results)
+            involved_apps = self._collect_task_list(original_task, "involved_apps", "servers")
+            involved_apis = self._collect_task_list(original_task, "involved_apis", "intended_functions")
+            used_apis = self._extract_invoked_apis(group_results)
+            used_apps = self._apps_from_apis(used_apis)
             failure_reasons = self._collect_unique_validation_reasons(
                 group_results,
                 field="task_completion_reason",
@@ -54,6 +64,10 @@ class PrePingProposerMemory:
                     aggregate_fail_reasons=list(aggregate_item.get("aggregate_fail_reasons", [])),
                     failure_reasons=failure_reasons,
                     feasibility_reasons=feasibility_reasons,
+                    involved_apps=involved_apps,
+                    involved_apis=involved_apis,
+                    used_apps=used_apps,
+                    used_apis=used_apis,
                 )
             )
 
@@ -116,6 +130,7 @@ class PrePingProposerMemory:
                 "unsolved_feasible_count": len(unsolved_feasible_tasks),
                 "infeasible_count": len(infeasible_tasks),
             },
+            "usage_summary": self._build_usage_summary(),
             "no_validator_tasks": no_validator_tasks,
             "success_tasks": success_tasks,
             "failure_tasks": failure_tasks,
@@ -134,10 +149,12 @@ class PrePingProposerMemory:
         }
 
     def to_dict(self) -> Dict[str, Any]:
+        generation_summary = self.get_generation_summary()
         return {
             "num_entries": len(self._entries),
             "entries": [entry.to_dict() for entry in self._entries],
-            "generation_summary": self.get_generation_summary(),
+            "practice_history_view": generation_summary,
+            "generation_summary": generation_summary,
         }
 
     @classmethod
@@ -159,6 +176,10 @@ class PrePingProposerMemory:
                 aggregate_fail_reasons=list(entry.get("aggregate_fail_reasons", [])),
                 failure_reasons=list(entry.get("failure_reasons", [])),
                 feasibility_reasons=list(entry.get("feasibility_reasons", [])),
+                involved_apps=list(entry.get("involved_apps", [])),
+                involved_apis=list(entry.get("involved_apis", [])),
+                used_apps=list(entry.get("used_apps", [])),
+                used_apis=list(entry.get("used_apis", [])),
             )
             for entry in entries
         ]
@@ -188,7 +209,10 @@ class PrePingProposerMemory:
         reasons: List[str] = []
         for result in group_results:
             validation = result.get("validation") or {}
-            if validation_results is not None and str(validation.get("validation_result", "")) not in validation_results:
+            if (
+                validation_results is not None
+                and str(validation.get("validation_result", "")) not in validation_results
+            ):
                 continue
             reason = str(validation.get(field, "")).strip()
             if not reason or reason in reasons:
@@ -220,6 +244,14 @@ class PrePingProposerMemory:
             item["representative_failure_reason"] = representative_failure_reason
         if representative_infeasible_reason:
             item["representative_infeasible_reason"] = representative_infeasible_reason
+        if entry.involved_apps:
+            item["involved_apps"] = list(entry.involved_apps)
+        if entry.involved_apis:
+            item["involved_apis"] = list(entry.involved_apis)
+        if entry.used_apps:
+            item["used_apps"] = list(entry.used_apps)
+        if entry.used_apis:
+            item["used_apis"] = list(entry.used_apis)
         return item
 
     @classmethod
@@ -229,3 +261,93 @@ class PrePingProposerMemory:
         if entry.aggregate_fail_reasons:
             return entry.aggregate_fail_reasons[0]
         return ""
+
+    @staticmethod
+    def _first_original_task(group_results: List[Dict[str, Any]]) -> Dict[str, Any]:
+        for result in group_results:
+            original_task = result.get("original_task")
+            if isinstance(original_task, dict):
+                return original_task
+        return {}
+
+    @classmethod
+    def _collect_task_list(cls, original_task: Dict[str, Any], *keys: str) -> List[str]:
+        values: List[str] = []
+        for key in keys:
+            raw_items = original_task.get(key)
+            if not isinstance(raw_items, list):
+                continue
+            values.extend(str(item).strip() for item in raw_items if str(item).strip())
+        return cls._unique_preserve_order(values)
+
+    @classmethod
+    def _extract_invoked_apis(cls, group_results: List[Dict[str, Any]]) -> List[str]:
+        invoked: List[str] = []
+        for result in group_results:
+            for text in cls._iter_trajectory_texts(result):
+                for app_name, api_name in cls._APPWORLD_API_CALL_RE.findall(text):
+                    if app_name in cls._SUPPORT_APPS:
+                        continue
+                    invoked.append(f"{app_name}.{api_name}")
+        return cls._unique_preserve_order(invoked)
+
+    @staticmethod
+    def _iter_trajectory_texts(result: Dict[str, Any]) -> List[str]:
+        texts: List[str] = []
+
+        trajectory = result.get("trajectory") or []
+        if isinstance(trajectory, list):
+            for step in trajectory:
+                if isinstance(step, dict) and step.get("action"):
+                    texts.append(str(step["action"]))
+
+        llm_history = result.get("llm_history") or []
+        if isinstance(llm_history, list):
+            for message in llm_history:
+                if not isinstance(message, dict):
+                    continue
+                if str(message.get("role", "")).lower() != "assistant":
+                    continue
+                content = message.get("content")
+                if content:
+                    texts.append(str(content))
+
+        return texts
+
+    @classmethod
+    def _apps_from_apis(cls, api_names: List[str]) -> List[str]:
+        app_names = [api_name.split(".", 1)[0] for api_name in api_names if "." in api_name]
+        return cls._unique_preserve_order(app_names)
+
+    @staticmethod
+    def _unique_preserve_order(items: List[str]) -> List[str]:
+        seen = set()
+        unique_items: List[str] = []
+        for item in items:
+            if not item or item in seen:
+                continue
+            seen.add(item)
+            unique_items.append(item)
+        return unique_items
+
+    def _build_usage_summary(self, *, recent_entries: int = 50, max_items: int = 10) -> Dict[str, Any]:
+        entries = self._entries[-recent_entries:] if recent_entries > 0 else self._entries
+        app_counts: Counter[str] = Counter()
+        api_counts: Counter[str] = Counter()
+        for entry in entries:
+            app_counts.update(entry.used_apps)
+            api_counts.update(entry.used_apis)
+
+        return {
+            "recent_entry_count": len(entries),
+            "recent_overused_apps": self._format_counter_items(app_counts, max_items=max_items),
+            "recent_overused_apis": self._format_counter_items(api_counts, max_items=max_items),
+        }
+
+    @staticmethod
+    def _format_counter_items(counter: Counter[str], *, max_items: int) -> List[Dict[str, Any]]:
+        return [
+            {"name": name, "count": count}
+            for name, count in counter.most_common(max_items)
+            if name and count > 0
+        ]

@@ -137,6 +137,10 @@ class ProposerMemoryRecord:
     aggregate_fail_reasons: List[str] = field(default_factory=list)
     failure_reasons: List[str] = field(default_factory=list)
     feasibility_reasons: List[str] = field(default_factory=list)
+    involved_apps: List[str] = field(default_factory=list)
+    involved_apis: List[str] = field(default_factory=list)
+    used_apps: List[str] = field(default_factory=list)
+    used_apis: List[str] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)

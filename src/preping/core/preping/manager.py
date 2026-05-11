@@ -132,7 +132,7 @@ class PrePingManager:
         runs_per_task: int,
         repeat_eval_min_feasibility_score: int,
         repeat_eval_require_mixed_outcomes: bool,
-        memory_selection_mode: str = "default",
+        memory_selection_mode: str = "feasible_only",
     ) -> tuple[Dict[str, Any], List[Dict[str, Any]]]:
         """Apply validation policy to select solver-memory candidates."""
         return PrePingValidationPolicy.post_process_validation_results(

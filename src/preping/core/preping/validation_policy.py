@@ -11,10 +11,28 @@ from .records import SyntheticTaskAggregateRecord
 class PrePingValidationPolicy:
     """Pure policy layer for repeated validation and task-history selection."""
 
+    FEASIBLE_ONLY = "feasible_only"
+    SUCCESS_ONLY = "success_only"
+
     MEMORY_SELECTION_MODES = {
-        "default",
-        "single_run_include_failure",
+        FEASIBLE_ONLY,
+        SUCCESS_ONLY,
+        "default",  # Legacy alias for success_only.
+        "single_run_include_failure",  # Legacy alias for feasible_only.
     }
+
+    @classmethod
+    def normalize_memory_selection_mode(cls, memory_selection_mode: str) -> str:
+        """Map legacy CLI names onto the paper-facing memory selection modes."""
+        if not memory_selection_mode:
+            return cls.FEASIBLE_ONLY
+        if memory_selection_mode == "default":
+            return cls.SUCCESS_ONLY
+        if memory_selection_mode == "single_run_include_failure":
+            return cls.FEASIBLE_ONLY
+        if memory_selection_mode in {cls.FEASIBLE_ONLY, cls.SUCCESS_ONLY}:
+            return memory_selection_mode
+        raise ValueError(f"Unsupported memory_selection_mode: {memory_selection_mode}")
 
     @staticmethod
     def post_process_validation_results(
@@ -24,15 +42,16 @@ class PrePingValidationPolicy:
         runs_per_task: int,
         repeat_eval_min_feasibility_score: int,
         repeat_eval_require_mixed_outcomes: bool,
-        memory_selection_mode: str = "default",
+        memory_selection_mode: str = "feasible_only",
     ) -> tuple[Dict[str, Any], List[Dict[str, Any]]]:
+        normalized_mode = PrePingValidationPolicy.normalize_memory_selection_mode(memory_selection_mode)
         if validation_stats:
             task_diagnostics = PrePingValidationPolicy.build_task_diagnostics(
                 cycle_results,
                 min_feasibility_score=repeat_eval_min_feasibility_score,
                 require_mixed_outcomes=repeat_eval_require_mixed_outcomes,
                 runs_per_task=runs_per_task,
-                memory_selection_mode=memory_selection_mode,
+                memory_selection_mode=normalized_mode,
             )
             aggregate_pass_results = PrePingValidationPolicy.filter_results_by_task_diagnostics(
                 cycle_results,
@@ -43,7 +62,7 @@ class PrePingValidationPolicy:
                 aggregate_pass_results,
                 validation_stats=validation_stats,
                 runs_per_task=runs_per_task,
-                memory_selection_mode=memory_selection_mode,
+                memory_selection_mode=normalized_mode,
             )
             return task_diagnostics, memory_input_results
 
@@ -60,13 +79,14 @@ class PrePingValidationPolicy:
         min_feasibility_score: int = 5,
         require_mixed_outcomes: bool = True,
         runs_per_task: int = 1,
-        memory_selection_mode: str = "default",
+        memory_selection_mode: str = "feasible_only",
     ) -> Dict[str, Any]:
         if runs_per_task > 1:
             return PrePingValidationPolicy.aggregate_repeated_task_validations(
                 results,
                 min_feasibility_score=min_feasibility_score,
                 require_mixed_outcomes=require_mixed_outcomes,
+                memory_selection_mode=memory_selection_mode,
             )
         return PrePingValidationPolicy.aggregate_single_run_task_validations(
             results,
@@ -256,7 +276,10 @@ class PrePingValidationPolicy:
             results,
             allowed_validation_results={"success"},
         )
-        return [sorted(group, key=PrePingValidationPolicy._sort_memory_result_key)[0] for _, group in sorted(grouped.items(), key=lambda pair: pair[0])]
+        return [
+            sorted(group, key=PrePingValidationPolicy._sort_memory_result_key)[0]
+            for _, group in sorted(grouped.items(), key=lambda pair: pair[0])
+        ]
 
     @staticmethod
     def select_single_run_memory_results(
@@ -264,9 +287,10 @@ class PrePingValidationPolicy:
         *,
         memory_selection_mode: str,
     ) -> List[Dict[str, Any]]:
-        if memory_selection_mode == "default":
+        normalized_mode = PrePingValidationPolicy.normalize_memory_selection_mode(memory_selection_mode)
+        if normalized_mode == PrePingValidationPolicy.SUCCESS_ONLY:
             return PrePingValidationPolicy.select_successful_memory_results(results)
-        if memory_selection_mode == "single_run_include_failure":
+        if normalized_mode == PrePingValidationPolicy.FEASIBLE_ONLY:
             grouped = PrePingValidationPolicy._group_memory_candidate_results(
                 results,
                 allowed_validation_results={"success", "failure"},
@@ -287,13 +311,21 @@ class PrePingValidationPolicy:
     ) -> List[Dict[str, Any]]:
         if not validation_stats:
             return results
+        normalized_mode = PrePingValidationPolicy.normalize_memory_selection_mode(memory_selection_mode)
         if runs_per_task > 1:
-            if memory_selection_mode not in PrePingValidationPolicy.MEMORY_SELECTION_MODES:
-                raise ValueError(f"Unsupported memory_selection_mode: {memory_selection_mode}")
-            return PrePingValidationPolicy.select_successful_memory_results(results)
+            if normalized_mode == PrePingValidationPolicy.SUCCESS_ONLY:
+                return PrePingValidationPolicy.select_successful_memory_results(results)
+            grouped = PrePingValidationPolicy._group_memory_candidate_results(
+                results,
+                allowed_validation_results={"success", "failure"},
+            )
+            return [
+                PrePingValidationPolicy._pick_representative_memory_result(group)
+                for _, group in sorted(grouped.items(), key=lambda pair: pair[0])
+            ]
         return PrePingValidationPolicy.select_single_run_memory_results(
             results,
-            memory_selection_mode=memory_selection_mode,
+            memory_selection_mode=normalized_mode,
         )
 
     @staticmethod
@@ -302,7 +334,9 @@ class PrePingValidationPolicy:
         *,
         min_feasibility_score: int = 5,
         require_mixed_outcomes: bool = True,
+        memory_selection_mode: str = "feasible_only",
     ) -> Dict[str, Any]:
+        normalized_mode = PrePingValidationPolicy.normalize_memory_selection_mode(memory_selection_mode)
         grouped: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
         for result in results:
             synthetic_idx = (result.get("original_task") or {}).get("synthetic_task_index")
@@ -375,6 +409,7 @@ class PrePingValidationPolicy:
                 "min_feasibility_score": min_feasibility_score,
                 "require_mixed_outcomes": require_mixed_outcomes,
                 "runs_per_task": None,
+                "memory_selection_mode": normalized_mode,
             },
             "tasks": tasks,
         }
@@ -385,7 +420,7 @@ class PrePingValidationPolicy:
         results: List[Dict[str, Any]],
         *,
         min_feasibility_score: int = 5,
-        memory_selection_mode: str = "default",
+        memory_selection_mode: str = "feasible_only",
     ) -> Dict[str, Any]:
         grouped: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
         for result in results:
@@ -393,7 +428,8 @@ class PrePingValidationPolicy:
             if synthetic_idx is not None:
                 grouped[str(synthetic_idx)].append(result)
 
-        include_failure_memory = memory_selection_mode == "single_run_include_failure"
+        normalized_mode = PrePingValidationPolicy.normalize_memory_selection_mode(memory_selection_mode)
+        include_failure_memory = normalized_mode == PrePingValidationPolicy.FEASIBLE_ONLY
 
         tasks: List[Dict[str, Any]] = []
         by_synthetic_task_index: Dict[str, Dict[str, Any]] = {}
@@ -462,6 +498,7 @@ class PrePingValidationPolicy:
                 "min_feasibility_score": min_feasibility_score,
                 "require_mixed_outcomes": False,
                 "runs_per_task": 1,
+                "memory_selection_mode": normalized_mode,
             },
             "tasks": tasks,
         }

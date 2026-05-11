@@ -198,6 +198,7 @@ class PrePingProposer:
             return "None"
 
         summary = task_history_summary.get("summary") or {}
+        usage_summary = task_history_summary.get("usage_summary") or {}
         lines: List[str] = []
         if summary:
             summary_bits = []
@@ -213,6 +214,18 @@ class PrePingProposer:
                 summary_bits.append(f"{key}={value}")
             if summary_bits:
                 lines.append("Summary: " + ", ".join(summary_bits))
+
+        overused_apps = PrePingProposer._format_usage_count_items(
+            usage_summary.get("recent_overused_apps") or []
+        )
+        if overused_apps:
+            lines.append("Recently overused apps: " + overused_apps)
+
+        overused_apis = PrePingProposer._format_usage_count_items(
+            usage_summary.get("recent_overused_apis") or []
+        )
+        if overused_apis:
+            lines.append("Recently overused APIs: " + overused_apis)
 
         bucket_specs = (
             ("success_tasks", "Solved tasks", None, None, False),
@@ -245,9 +258,41 @@ class PrePingProposer:
                 if reason:
                     reason = " ".join(reason.split())
                     line += f"\n  reason: {reason}"
+                metadata = PrePingProposer._format_generation_item_metadata(item)
+                if metadata:
+                    line += f"\n  {metadata}"
                 lines.append(line)
 
         return "\n".join(lines) if lines else "None"
+
+    @staticmethod
+    def _format_usage_count_items(items: List[Dict[str, Any]]) -> str:
+        """Render proposer-memory usage counters as ``name:count`` pairs."""
+        chunks = []
+        for item in items:
+            name = str(item.get("name", "")).strip()
+            count = item.get("count")
+            if not name or count is None:
+                continue
+            chunks.append(f"{name}:{count}")
+        return ", ".join(chunks)
+
+    @staticmethod
+    def _format_generation_item_metadata(item: Dict[str, Any]) -> str:
+        """Render task-level intended and observed tool-use metadata."""
+        fields = (
+            ("involved_apps", "involved_apps"),
+            ("involved_apis", "involved_apis"),
+            ("used_apps", "used_apps"),
+            ("used_apis", "used_apis"),
+        )
+        chunks = []
+        for key, label in fields:
+            values = item.get(key) or []
+            if not values:
+                continue
+            chunks.append(f"{label}={', '.join(str(value) for value in values)}")
+        return "; ".join(chunks)
 
     @classmethod
     def _build_task_history_section(cls, task_history_summary: Optional[Dict[str, Any]]) -> str:
@@ -268,6 +313,8 @@ class PrePingProposer:
             "- Treat failure or infeasibility reasons as short hints about missing skills or bad assumptions, not as instructions to reproduce the same task.\n"
             "- Avoid near-duplicates: do not merely rename entities or tweak dates, numbers, thresholds, or output format while keeping the same task pattern.\n"
             "- Keep the batch diverse across apps, entities, reasoning patterns, and action structures.\n\n"
+            "- Use usage statistics as weak coverage context, not as hard constraints.\n"
+            "- Prefer feasible expansions that naturally broaden app/API coverage.\n\n"
             f"{task_history_summary_str}\n"
         )
 
@@ -416,7 +463,7 @@ class PrePingProposer:
         grounded: bool,
         requested_tasks: int,
         max_retries: int,
-    ) -> Optional[List[Dict[str, Any]]]:
+    ) -> List[Dict[str, Any]]:
         """Request a single task batch and parse the JSON response."""
         generation_max_tokens = self._estimate_generation_max_tokens(requested_tasks)
         kind = "grounded" if grounded else "initial"
@@ -459,8 +506,10 @@ class PrePingProposer:
                 continue
             return tasks
 
-        logger.error(f"Failed to parse {kind} tasks after {max_retries} retries. Last error: {last_error}")
-        return None
+        raise RuntimeError(
+            f"Failed to parse {kind} task-generation response after {max_retries} retries. "
+            f"Last error: {last_error}"
+        )
 
     def generate_tasks(
         self,
@@ -522,7 +571,7 @@ class PrePingProposer:
                 dataset_examples_section=self.dataset_examples_section if self.include_dataset_examples else "",
             )
 
-        tasks: Optional[List[Dict[str, Any]]] = []
+        tasks: List[Dict[str, Any]] = []
         remaining = generation_num_tasks
         batch_size = 10
         batch_index = 0
@@ -552,9 +601,6 @@ class PrePingProposer:
                 requested_tasks=requested_batch,
                 max_retries=max_retries,
             )
-            if batch_tasks is None:
-                tasks = None
-                break
             self._last_generation_candidates.extend(
                 {
                     "batch_index": batch_index,
@@ -566,9 +612,6 @@ class PrePingProposer:
             tasks.extend(batch_tasks)
             remaining -= requested_batch
             batch_index += 1
-
-        if tasks is None:
-            return []
 
         # Final selection keeps semantically novel tasks relative to history and within-batch duplicates.
         tasks = self._select_semantically_novel_tasks(

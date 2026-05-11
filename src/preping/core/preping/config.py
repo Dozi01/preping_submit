@@ -31,4 +31,4 @@ class TaskManagerConfig:
     runs_per_task: int = 1
     repeat_eval_min_feasibility_score: int = 5
     repeat_eval_require_mixed_outcomes: bool = True
-    memory_selection_mode: str = "single_run_include_failure"
+    memory_selection_mode: str = "feasible_only"

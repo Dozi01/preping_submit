@@ -121,17 +121,6 @@ class PrePingValidationGate:
             trajectory=formatted_trajectory,
         )
 
-    def _build_error_result(self, error: Exception) -> PrePingValidationResult:
-        """Build fallback invalid result for validation failures."""
-        error_text = f"Validation error: {str(error)}"
-        return PrePingValidationResult(
-            validation_result="invalid",
-            feasibility_score=1,
-            task_completion_score=1,
-            feasibility_reason=error_text,
-            task_completion_reason=error_text,
-        )
-
     def _validation_from_response(self, response_text: str) -> PrePingValidationResult:
         """Parse response text and map it to ValidationResult."""
         parsed = self._parse_json_response(response_text)
@@ -177,8 +166,10 @@ class PrePingValidationGate:
 
             return self._validation_from_response(response_text)
         except Exception as exc:  # noqa: BLE001
-            logger.warning("Validation failed with error: %s", exc)
-            return self._build_error_result(exc)
+            raise RuntimeError(
+                "Trajectory validation failed while the validator was enabled. "
+                "This is a validator execution/parsing failure, not an infeasible-task judgment."
+            ) from exc
 
     def validate_batch(
         self,
@@ -212,27 +203,31 @@ class PrePingValidationGate:
                 console=console,
             ) as progress:
                 task = progress.add_task("[cyan]Validating trajectories...", total=len(responses))
-                for response in responses:
+                for response_index, response in enumerate(responses):
                     response_text = response if isinstance(response, str) else str(response)
                     if self.verbose:
                         logger.info("\n[VALIDATION RESPONSE]\n%s\n%s", response_text, "=" * 60)
                     try:
                         validation_results.append(self._validation_from_response(response_text))
                     except Exception as exc:  # noqa: BLE001
-                        logger.warning("Validation failed with error: %s", exc)
-                        validation_results.append(self._build_error_result(exc))
+                        raise RuntimeError(
+                            "Trajectory validation failed while parsing validator response "
+                            f"at batch index {response_index}."
+                        ) from exc
                     progress.update(task, advance=1)
             return validation_results
 
-        for response in responses:
+        for response_index, response in enumerate(responses):
             response_text = response if isinstance(response, str) else str(response)
             if self.verbose:
                 logger.info("\n[VALIDATION RESPONSE]\n%s\n%s", response_text, "=" * 60)
             try:
                 validation_results.append(self._validation_from_response(response_text))
             except Exception as exc:  # noqa: BLE001
-                logger.warning("Validation failed with error: %s", exc)
-                validation_results.append(self._build_error_result(exc))
+                raise RuntimeError(
+                    "Trajectory validation failed while parsing validator response "
+                    f"at batch index {response_index}."
+                ) from exc
 
         return validation_results
 

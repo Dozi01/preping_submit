@@ -62,9 +62,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--memory_selection_mode",
         type=str,
-        choices=["default", "single_run_include_failure"],
+        choices=["feasible_only", "success_only", "default", "single_run_include_failure"],
         default=None,
-        help="Research mode for validator-based memory selection: default or single_run_include_failure",
+        help=(
+            "Validator-gated solver-memory policy. "
+            "feasible_only matches the paper: admit feasible success and failure trajectories. "
+            "success_only admits only completed trajectories. Legacy aliases are also accepted."
+        ),
     )
     parser.add_argument("--base_task_id", type=str, default=None, help="Base task ID for environment initialization")
     parser.add_argument(

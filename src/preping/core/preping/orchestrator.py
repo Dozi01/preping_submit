@@ -124,8 +124,20 @@ class PrePingOrchestrator:
             all_grounded_environment_summaries=all_grounded_environment_summaries,
             all_tasks=all_tasks,
             total_tasks_executed=total_tasks_executed,
-            proposer_memory=self.proposer_history.to_dict(),
+            proposer_memory=self._build_proposer_memory_snapshot(
+                grounded_environment_summaries=all_grounded_environment_summaries,
+            ),
         )
+
+    def _build_proposer_memory_snapshot(
+        self,
+        *,
+        grounded_environment_summaries: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """Return the paper-facing M_prop snapshot with both proposer-memory views."""
+        snapshot = self.proposer_history.to_dict()
+        snapshot["grounded_environment_view"] = list(grounded_environment_summaries)
+        return snapshot
 
     def _run_single_cycle(
         self,
